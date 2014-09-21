@@ -46,13 +46,7 @@ public:
 	char toevent;
 	int statevector;
 
-	LocalRecord(){
-		statevector = 0x7FFFFFFF;
-		localmark = 0x00;
-
-	}
-	~LocalRecord();
-	void operator= (LocalRecord t){
+	__device__ void operator= (LocalRecord t){
 		localmark = t.localmark;
 		toevent = t.toevent;
 		statevector = t.statevector;
@@ -64,11 +58,6 @@ public:
 	unsigned int beginindex;
 	unsigned int endindex;
 
-	Bucket(){
-		beginindex = 0;
-		endindex = 0;
-	}
-	~Bucket();
 };
 
 class Nodemark{
@@ -78,11 +67,6 @@ public:
 	unsigned int synbeginbyte;
 	unsigned int synendbyte;
 
-	Nodemark(){
-		beginbyte = 0;
-		endbyte = 0;
-	}
-	~Nodemark();
 };
 
 __device__ LocalRecord *GlobalOpenHash;  
@@ -97,7 +81,7 @@ __device__ LocalRecord *GlobalVisitedHash;  //here, for visited stateV, use hash
 
 __device__ unsigned int communicationlayer[100];
 __device__ bool communicationcollision[100];
-__device__ Bucket communicationGstore[100];  //store the buckets that child blocks store their data
+__device__ Bucket *communicationGstore;  //store the buckets that child blocks store their data
 __device__ bool Ifreturn2parent[100];
 
 __device__ volatile unsigned int * GlobalBucketsCount;
@@ -1898,6 +1882,7 @@ void CallCudaBFS(unsigned int * AllLTS, unsigned int * AllStates, unsigned char 
 	cudaMalloc((unsigned int **)&G_LTSStateEncodeBits, sizeof(unsigned int) * LTSNum);
 	cudaMalloc((unsigned int **)&G_Startlist, sizeof(unsigned int) * Startthreadgroupnum);
 	cudaMalloc((LocalRecord **)&GlobalVisitedHash, sizeof(LocalRecord) * AllLTSStateNum * 10);
+	cudaMalloc((Bucket **)&communicationGstore,sizeof(Bucket) * 100);
 	//cudaMalloc((unsigned int *)&G_InitialStateV, sizeof(int));
 
 	cudaMalloc((unsigned int **)&GlobalbucketCount, sizeof(unsigned int) * GlobalBucketNum);
