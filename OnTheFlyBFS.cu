@@ -16,7 +16,8 @@ using namespace std;
 
 texture<unsigned int, 1, cudaReadModeElementType> LTSOFFSET;  //1 means 1-dimension
 texture<unsigned int, 1, cudaReadModeElementType> STATEOFFSET;
-texture<unsigned int, 1, cudaReadModeElementType> OUTGOINGDETAIL;
+texture<unsigned char, 1, cudaReadModeElementType> OUTGOINGDETAIL;
+texture<unsigned char, 1, cudaReadModeElementType> SYNCOUTGOING;
 texture<unsigned int, 1, cudaReadModeElementType> STATEENCODE;
 
 __constant__ int LA1;
@@ -532,7 +533,7 @@ __global__ void CUDADeadlockBFSVerifyChild(unsigned int ParentID, unsigned int P
 
 	int Inblocktid = threadIdx.x;
 	int Ingridtid = threadIdx.x + blockIdx.x * blockDim.x;
-	int InWarptid = Inblocktid % 32;
+	int InWarptid = Inblocktid % 31;
 	int InvthreadgroupID;
 	int vthreadgroupID;
 	int Warpid = Inblocktid/32;
@@ -1083,19 +1084,38 @@ __global__ void CUDADeadlockBFSVerify(unsigned int * PG_AllLTS, unsigned int * P
 	__shared__ bool haveChild;
 	__shared__ int launchtime;
 
-	extern __shared__ bool S[]; 
-	bool * syncduplicate = S;
-	bool * needsyndupdetect = &syncduplicate[vthreadgroupnuminblock*PLTSNum];
-	bool * ifnooutgoing = &needsyndupdetect[vthreadgroupnuminblock];
-	unsigned int * SynEventInteractive = (unsigned int *)&ifnooutgoing[vthreadgroupnuminblock*PLTSNum];
+	//__shared__ bool ifnooutgoing[16];
+	//__shared__ LocalRecord RecordTable1[512];
+	//__shared__ LocalRecord RecordTable2[512];
+	//__shared__ LocalRecord RecordTable3[512];
+	//__shared__ LocalRecord GroupStore[256];
+	//__shared__ Bucket WarpCBindex[16];
 
-	LocalRecord * RecordTable1 = (LocalRecord *)&(SynEventInteractive[vthreadgroupnuminblock*PLTSNum]);
+	i = vthreadgroupnuminblock * PLTSNum;
+	extern __shared__ bool C[]; 
+	bool * syncduplicate = C;
+	bool * needsyndupdetect = &syncduplicate[i];
+	//bool * needsyndupdetect = C + i;
+	bool * ifnooutgoing = &needsyndupdetect[vthreadgroupnuminblock];
+	unsigned int * SynEventInteractive = (unsigned int *)&ifnooutgoing[i];
+	//unsigned int * SynEventInteractive = (unsigned int *)&needsyndupdetect[vthreadgroupnuminblock];
+	LocalRecord * RecordTable1 = (LocalRecord *)&(SynEventInteractive[i]);
 	LocalRecord * RecordTable2 = &RecordTable1[blockDim.x];
 	LocalRecord * RecordTable3 = &RecordTable2[blockDim.x];
 	LocalRecord * GroupStore = &RecordTable3[blockDim.x];
-
 	Bucket * WarpCBindex = (Bucket *)&GroupStore[vthreadgroupnuminblock];
+	
 	if(Inblocktid == 0){
+		for(i = 0; i < vthreadgroupnuminblock * PLTSNum; i++){
+			ifnooutgoing[i] = false; 
+			SynEventInteractive[i] = EMPTYVECT32;
+		}
+		maxlayer=0;
+		nonewcount = 0;
+		haveChild = false;
+		launchtime = 0;
+		ifblocknostate = false;
+	
 		for(i=0; i<WarpNum; i++){
 			WarpCBindex[i].beginindex = 0;
 			WarpCBindex[i].endindex = 0;
@@ -1122,19 +1142,6 @@ __global__ void CUDADeadlockBFSVerify(unsigned int * PG_AllLTS, unsigned int * P
 			GlobalBuckets[i].beginindex = i * blockDim.x;
 			GlobalBuckets[i].endindex = (i+1)*blockDim.x - 1;
 		}
-	}
-
-	if(Inblocktid == 0){
-		for(i = 0; i < vthreadgroupnuminblock * PLTSNum; i++){
-			ifnooutgoing[i] = false; 
-			SynEventInteractive[i] = EMPTYVECT32;
-		}
-		maxlayer=0;
-		nonewcount = 0;
-		haveChild = false;
-		launchtime = 0;
-		ifblocknostate = false;
-	
 	}
 
 	if(InvthreadgroupID != -1){
@@ -1868,25 +1875,7 @@ void CallCudaBFS(unsigned int * AllLTS, unsigned int * AllStates, unsigned char 
 		rv[i] = rand();
 	}
 
-	cudaMemcpyToSymbol(LA1, &rv[0], sizeof(int));
-	cudaMemcpyToSymbol(LA2, &rv[1], sizeof(int));
-	cudaMemcpyToSymbol(LA3, &rv[2], sizeof(int));
-	cudaMemcpyToSymbol(LB1, &rv[3], sizeof(int));
-	cudaMemcpyToSymbol(LB2, &rv[4], sizeof(int));
-	cudaMemcpyToSymbol(LB3, &rv[5], sizeof(int));
-	cudaMemcpyToSymbol(BUCA, &rv[6], sizeof(int));
-	cudaMemcpyToSymbol(BUCB, &rv[7], sizeof(int));
-
-	for(i = 0; i < 6; i++){
-		rv[i] = rand();
-	}
-	cudaMemcpyToSymbol(GA1, &rv[0], sizeof(int));
-	cudaMemcpyToSymbol(GA2, &rv[1], sizeof(int));
-	cudaMemcpyToSymbol(GA3, &rv[2], sizeof(int));
-	cudaMemcpyToSymbol(GB1, &rv[3], sizeof(int));
-	cudaMemcpyToSymbol(GB2, &rv[4], sizeof(int));
-	cudaMemcpyToSymbol(GB3, &rv[5], sizeof(int));
-
+	cudaSetDevice(0);
 	/*if(!InitCUDA()){
 	    printf("Sorry,CUDA has not been initialized.\n");
 	    exit(NULL);
@@ -1916,16 +1905,16 @@ void CallCudaBFS(unsigned int * AllLTS, unsigned int * AllStates, unsigned char 
 
 	Startthreadgroupnum = 1;
 	H_GlobalbucketNum = LTSNum * 2;
-    	cudaMalloc((unsigned int **)&G_AllLTS, sizeof(unsigned int) * LTSNum);
-	cudaMalloc((unsigned int **)&G_AllStates, sizeof(unsigned int) * AllLTSStateNum);
-	cudaMalloc((unsigned char **)&G_AllTransitions, sizeof(unsigned char) * AllTransLength);
-	cudaMalloc((unsigned char **)&G_AllSyncTrans,sizeof(unsigned char) * AllSyncTransLength);
-	cudaMalloc((unsigned int **)&G_LTSStateEncodeBytes, sizeof(unsigned int) * LTSNum);
-	cudaMalloc((unsigned int **)&G_LTSStateEncodeBits, sizeof(unsigned int) * LTSNum);
-	cudaMalloc((unsigned int **)&G_Startlist, sizeof(unsigned int) * Startthreadgroupnum);
+    	cudaMalloc((void **)&G_AllLTS, sizeof(unsigned int) * LTSNum);
+	cudaMalloc((void **)&G_AllStates, sizeof(unsigned int) * AllLTSStateNum);
+	cudaMalloc((void **)&G_AllTransitions, sizeof(unsigned char) * AllTransLength);
+	cudaMalloc((void **)&G_AllSyncTrans,sizeof(unsigned char) * AllSyncTransLength);
+	cudaMalloc((void **)&G_LTSStateEncodeBytes, sizeof(unsigned int) * LTSNum);
+	cudaMalloc((void **)&G_LTSStateEncodeBits, sizeof(unsigned int) * LTSNum);
+	cudaMalloc((void **)&G_Startlist, sizeof(unsigned int) * Startthreadgroupnum);
 	//cudaMalloc((unsigned int *)&G_InitialStateV, sizeof(int));
 
-	cudaMalloc((bool **)&G_DetectResult, sizeof(bool));
+	cudaMalloc((void **)&G_DetectResult, sizeof(bool));
 
 	cudaMemcpy(G_AllLTS, AllLTS, sizeof(unsigned int) * LTSNum, cudaMemcpyHostToDevice);
 	cudaMemcpy(G_AllStates, AllStates, sizeof(unsigned int) * AllLTSStateNum, cudaMemcpyHostToDevice);
@@ -1936,16 +1925,40 @@ void CallCudaBFS(unsigned int * AllLTS, unsigned int * AllStates, unsigned char 
 	cudaMemcpy(G_LTSStateEncodeBits, LTSStateEncodeBits, sizeof(unsigned int) * LTSNum, cudaMemcpyHostToDevice);
 	cudaMemcpy(G_Startlist, H_Startlist, sizeof(unsigned int) * Startthreadgroupnum, cudaMemcpyHostToDevice);
 
+
+	cudaMemcpyToSymbol(LA1, &rv[0], sizeof(int));
+	cudaMemcpyToSymbol(LA2, &rv[1], sizeof(int));
+	cudaMemcpyToSymbol(LA3, &rv[2], sizeof(int));
+	cudaMemcpyToSymbol(LB1, &rv[3], sizeof(int));
+	cudaMemcpyToSymbol(LB2, &rv[4], sizeof(int));
+	cudaMemcpyToSymbol(LB3, &rv[5], sizeof(int));
+	cudaMemcpyToSymbol(BUCA, &rv[6], sizeof(int));
+	cudaMemcpyToSymbol(BUCB, &rv[7], sizeof(int));
+
+	for(i = 0; i < 6; i++){
+		rv[i] = rand();
+	}
+	cudaMemcpyToSymbol(GA1, &rv[0], sizeof(int));
+	cudaMemcpyToSymbol(GA2, &rv[1], sizeof(int));
+	cudaMemcpyToSymbol(GA3, &rv[2], sizeof(int));
+	cudaMemcpyToSymbol(GB1, &rv[3], sizeof(int));
+	cudaMemcpyToSymbol(GB2, &rv[4], sizeof(int));
+	cudaMemcpyToSymbol(GB3, &rv[5], sizeof(int));
+
+
 	cudaBindTexture(0, LTSOFFSET, G_AllLTS);
 	cudaBindTexture(0, STATEOFFSET, G_AllStates);
-	cudaBindTexture(0, OUTGOINGDETAIL, G_AllTransitions);  //how texture memory can accelerate the access rate need to be explored
+	//cudaBindTexture(0, OUTGOINGDETAIL, G_AllTransitions);  //how texture memory can accelerate the access rate need to be explored
+	//cudaBindTexture(0, SYNCOUTGOING, G_AllSyncTrans);
 	cudaBindTexture(0, STATEENCODE, G_LTSStateEncodeBytes);
 
-	CUDADeadlockBFSVerify<<<1, 512>>>(G_AllLTS, G_AllStates, G_AllTransitions, G_AllSyncTrans, G_Startlist, G_LTSStateEncodeBits, G_LTSStateEncodeBytes, EventEncodeBytes, LTSNum, G_DetectResult, H_GlobalbucketNum, AllLTSStateNum);
+	dim3 g(1,1,1);
+	dim3 b(512,1,1);
+	CUDADeadlockBFSVerify<<<g, b, 48>>>(G_AllLTS, G_AllStates, G_AllTransitions, G_AllSyncTrans, G_Startlist, G_LTSStateEncodeBits, G_LTSStateEncodeBytes, EventEncodeBytes, LTSNum, G_DetectResult, H_GlobalbucketNum, AllLTSStateNum);
 	
 	cudaUnbindTexture(LTSOFFSET);
 	cudaUnbindTexture(STATEOFFSET);
-	cudaUnbindTexture(OUTGOINGDETAIL);
+	//cudaUnbindTexture(OUTGOINGDETAIL);
 	cudaUnbindTexture(STATEENCODE);
 
 	cudaFree(G_AllLTS);
