@@ -58,6 +58,7 @@ namespace GenerateTestSample
 
             for (i = 0; i < LTSnum; i++)
             {
+                Allsnum++;
                 layernum = (uint)(Math.Pow(2, beginsynlayer)*2 - 1);
                 for (j = 0; j < layernum; j++)
                 {
@@ -69,6 +70,7 @@ namespace GenerateTestSample
                     {
                         sid = sidbegin + (uint)m;
                         generatelts.Enqueue(sid);
+                        Allsnum++;
                         if (i == 0)
                         {
                             eidcount = (uint)rd.Next(11, 31);
@@ -119,7 +121,7 @@ namespace GenerateTestSample
                        
                         //sw[i].Write(" ");
                         tmpdic.Add(eidcount,sid);
-                        Allsnum++;
+                   
                        
                         
                     }
@@ -138,7 +140,7 @@ namespace GenerateTestSample
                 }
 
                 layernum = (uint)(Math.Pow(2, beginsynlayer + 1));
-                layernum = (uint)(layernum * Math.Pow(4, totallayer - beginsynlayer) * 4 - layernum) / 3; 
+                layernum = (uint)((layernum + layernum*4*(totallayer-beginsynlayer-1))*(totallayer-beginsynlayer))/2; 
                 for (k = 0; k < layernum; k++ )
                 {
                     current = generatelts.Dequeue();
@@ -149,6 +151,7 @@ namespace GenerateTestSample
                         {
                             sid = sidbegin + (uint)m;
                             generatelts.Enqueue(sid);
+                            Allsnum++;
                             if (i == 0)
                             {
                                 eidcount = (uint)rd.Next(11, 31);
@@ -198,7 +201,7 @@ namespace GenerateTestSample
                             }
                             
                             tmpdic.Add(eidcount, sid);
-                            Allsnum++;
+                            
                             //sw[i].Write(" ");
                             //sw[i].Write(sid);
                            
@@ -220,6 +223,7 @@ namespace GenerateTestSample
                     {
                         sid = sidbegin;
                         generatelts.Enqueue(sid);
+                        Allsnum++;
                         if(i == 0)
                             eidcount = (uint)rd.Next(11, 31);
                         else
@@ -234,6 +238,7 @@ namespace GenerateTestSample
                         {
                             sid = sidbegin + (uint)m;
                             generatelts.Enqueue(sid);
+                            Allsnum++;
 
                             eidcount = (uint)rd.Next(0, 11);
                             if (!tmpeset.Contains(eidcount))
@@ -255,7 +260,7 @@ namespace GenerateTestSample
                                 //sw[i].Write(eidcount);
                             }
                             tmpdic.Add(eidcount, sid);
-                            Allsnum++;
+                            
                             //sw[i].Write(" ");
                             //sw[i].Write(sid);
                         }
@@ -272,6 +277,11 @@ namespace GenerateTestSample
                         tmpdic.Clear();
                         sw[i].Write("\n");
                     }
+                }
+                while (generatelts.Count > 0)
+                {
+                    sw[i].Write("\n");
+                    generatelts.Dequeue();
                 }
                 sw[i].Flush();
                 sw[i].Close();
@@ -385,9 +395,9 @@ namespace GenerateTestSample
             string[] splitA = str4.Split(delimStr.ToCharArray());
 
             this.ALLSNUM = UInt32.Parse(splitA[0]);
-            this.outgoingtrans = new List<OutgoingT>[this.ALLSNUM];
-            this.syncoutgoingtrans = new List<OutgoingT>[this.ALLSNUM];
-            for (i = 0; i < this.ALLSNUM; i++)
+            this.outgoingtrans = new List<OutgoingT>[this.ALLSNUM + 1];
+            this.syncoutgoingtrans = new List<OutgoingT>[this.ALLSNUM + 1];
+            for (i = 0; i < this.ALLSNUM+1; i++)
             {
                 this.outgoingtrans[i] = new List<OutgoingT>();
                 this.syncoutgoingtrans[i] = new List<OutgoingT>();
@@ -432,8 +442,8 @@ namespace GenerateTestSample
 
             }
 
-            this.AllLts[1] = m + 1;
-            m++;
+            this.AllLts[1] = m;
+            //m++;
             this.StateEncodeBits[0] = (uint)(Math.Log(this.AllLts[1]) / Math.Log(2));
             if (Math.Pow(2, this.StateEncodeBits[0]) < (this.AllLts[1] - this.AllLts[0]))
             {
@@ -441,7 +451,7 @@ namespace GenerateTestSample
             }
 
             storemark = false;
-            for (i = 0; i < split2.Length; i++)
+            for (i = 0; i < split2.Length - 1; i++)
             {
                 j = i + 1;
                 if (UInt32.Parse(split2[i]) != 0)
@@ -475,7 +485,7 @@ namespace GenerateTestSample
                 }
             }
 
-            this.AllLts[2] = m + 1;
+            this.AllLts[2] = m; 
             this.StateEncodeBits[1] = (uint)(Math.Log(this.AllLts[2] - this.AllLts[1]) / Math.Log(2));
             if (Math.Pow(2, this.StateEncodeBits[1]) < (this.AllLts[2] - this.AllLts[1]))
             {
@@ -695,8 +705,8 @@ namespace GenerateTestSample
 
         static void Main(string[] args)
         {
-            //PLTS LTSSAMPLE = new PLTS(3, 2, 5);
-            //LTSSAMPLE.GeneratePLTS();   
+            PLTS LTSSAMPLE = new PLTS(3, 2, 5);
+            LTSSAMPLE.GeneratePLTS();   
 
             GenerateSample SG = new GenerateSample();
            

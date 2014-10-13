@@ -26,6 +26,8 @@ texture<unsigned int, 1, cudaReadModeElementType> LTSSTATEBITS;
 __constant__ int LA1;
 __constant__ int LA2;
 __constant__ int LA3;
+__constant__ int LA4;
+__constant__ int LB4;
 __constant__ int GA1;
 __constant__ int GA2;
 __constant__ int GA3;
@@ -35,6 +37,8 @@ __constant__ int LB3;
 __constant__ int GB1;
 __constant__ int GB2;
 __constant__ int GB3;
+__constant__ int GA4;
+__constant__ int GB4;
 __constant__ int BUCA;
 __constant__ int BUCB;
 __constant__ int TableSize;
@@ -131,27 +135,34 @@ __device__ unsigned int Buckethash(unsigned int k)
 __device__ unsigned int Globalhash(unsigned int k, int index)
 {
 	if(index == 0)
-		return (GA1 ^ k + GB1) % PrimeNum % (3*TableSize);
+		return (GA1 * k + GB1) % PrimeNum % (3*TableSize);
 
 	if(index == 1)
-		return (GA2 ^ k + GB2) % PrimeNum % (3*TableSize);
+		return (GA2 * k + GB2) % PrimeNum % (3*TableSize);
 
 	if(index == 2)
-		return (GA3 ^ k + GB3) % PrimeNum % (3*TableSize);
+		return (GA3 * k + GB3) % PrimeNum % (3*TableSize);
+	if(index == 3)
+		return (GA4 * k + GB4) % PrimeNum % (3*TableSize);
+
 }
 
 __device__ unsigned int Localhash(unsigned int k, int index)
 {
 	if(index == 0){
-		return (LA1 ^ k + GA1) % PrimeNum % TableSize;
+		return (LA1 ^ k + LB1) % PrimeNum % TableSize;
 	}
 
 	if(index == 1){
-		return (LA2 ^ k + GA2) % PrimeNum % TableSize;
+		return (LA2 ^ k + LB2) % PrimeNum % TableSize;
 	}
 
 	if(index == 2){
-		return (LA3 ^ k + GA3) % PrimeNum % TableSize;
+		return (LA3 ^ k + LB3) % PrimeNum % TableSize;
+	}
+
+	if(index == 3){
+		return (LA4^k + LB4) % PrimeNum % TableSize;
 	}
 	
 }
@@ -213,6 +224,7 @@ __device__ bool CudaNewStateV(unsigned int * targetV, int tindex, int * index, i
 
 	int replacebeginbyte, replaceendbyte;
 	unsigned int i,j;
+	int k;
 	
 	replacebeginbyte = *count * OutGTbyte;
 	replaceendbyte =  (*count + 1)*OutGTbyte;
@@ -237,8 +249,8 @@ __device__ bool CudaNewStateV(unsigned int * targetV, int tindex, int * index, i
 	}else{
 		tostate = 0;
 
-		for( i = replaceendbyte - 1; i > replacebeginbyte-1; i--)
-			tostate = tostate | (OutgoingTs[i] << 8 * (replaceendbyte - 1 - i));
+		for( k = replaceendbyte - 1; k > replacebeginbyte-1; k--)
+			tostate = tostate | (OutgoingTs[k] << 8 * (replaceendbyte - 1 - k));
 	}
 
 	if(tostate == 0){
@@ -258,7 +270,7 @@ __device__ bool CudaNewStateV(unsigned int * targetV, int tindex, int * index, i
 
 	* targetV = (unsigned int) (i | j | tostate);
 
-	if((EEncode+Secode)*(*count + 2) > 32){
+	if((OutGTbyte)*(*count + 2) > 4){
 		* index += 1;
 		*count = 0;
 	}else
@@ -367,7 +379,7 @@ __device__ bool CudaHashStore(unsigned int beginHV, unsigned int PLTSNum, unsign
 	unsigned int localhash;
 	//LocalRecord kickoutRecord;
 	char tmp;
-	int i = 0;
+	int i = 0, j = 0;
 
 	unsigned int KeyV = beginHV;
 	unsigned int kickKeyV;
@@ -375,13 +387,28 @@ __device__ bool CudaHashStore(unsigned int beginHV, unsigned int PLTSNum, unsign
 	*RkickoutRecord = EMPTYVECT32;
 	while(i < IterationTime){
 		localhash = Localhash(KeyV, i % HashNum);
-		if((atomicCAS(&(AllT[(i%HashNum) * Tnum + localhash]), EMPTYVECT32, KeyV)==EMPTYVECT32))
+		if((atomicCAS(&(AllT[(i%HashNum) * Tnum + localhash]), EMPTYVECT32, KeyV))==EMPTYVECT32)
 			return false;
 		else{
 			if(AllT[(i%HashNum) * Tnum + localhash] == KeyV)
 				return false;
 
 			kickKeyV = atomicExch(&(AllT[(i%HashNum) * Tnum + localhash]), KeyV);
+
+			for(j = 0; j < Tnum; j++){
+				if(atomicCAS(&(AllT[(i%HashNum) * Tnum + (localhash + j)%Tnum]), EMPTYVECT32, kickKeyV)==EMPTYVECT32)
+					return false;
+				else if(AllT[(i%HashNum) * Tnum + (localhash+j)%Tnum] == KeyV)
+					return false;
+			
+				if(atomicCAS(&(AllT[(i%HashNum) * Tnum + (localhash - j + Tnum)%Tnum]), EMPTYVECT32, kickKeyV)==EMPTYVECT32){
+					return false;
+				}
+
+				else if(AllT[(i%HashNum) * Tnum + (localhash-j + Tnum)%Tnum] == KeyV)
+                                        return false;
+			}
+			kickKeyV =  atomicExch(&(AllT[(i%HashNum) * Tnum + (localhash - j + Tnum)%Tnum]), KeyV);
 			KeyV = kickKeyV;
 			i++;
 		}
@@ -423,7 +450,7 @@ __device__ bool CudaVisitedGlobalHashcal(unsigned int * HT, Bucket belongBucket,
 __device__ bool CudaVisitedGlobalHashstore(unsigned int * HT, unsigned int hasbucket, unsigned int hashv, unsigned int insertedrecord, unsigned int ltsnum){
 	Bucket buckethash;
 	unsigned int kickV;
-	int i = 0, j = 0, m = 0;
+	int i = 0, j = 0;
 	bool ifstored;
 	unsigned int kickou;
 
@@ -445,7 +472,7 @@ __device__ bool CudaVisitedGlobalHashstore(unsigned int * HT, unsigned int hasbu
 			}
 			hasbucket++;
 		}
-		if(hasbucket > openvisitedborder)
+		if(hasbucket > openvisitedborder-1)
 			break;
 	}
 
@@ -636,7 +663,7 @@ __global__ void CUDADeadlockBFSVerifyChild(unsigned int ParentID, unsigned int P
 			
 				if(!Ifcollisionhappens){
 					bool  ifmatch;
-					int tmpcount=0;
+					//int tmpcount=0;
 					int tmpj = 0;
 					int nosync;
 					int lessthanall;
@@ -649,7 +676,7 @@ __global__ void CUDADeadlockBFSVerifyChild(unsigned int ParentID, unsigned int P
 						if(m == 0 && syncduplicate[InvthreadgroupID + vthreadgroupID * PLTSNum]){
 							if(j == SuccessorMark.synendInt)
 								break;
-							CudaDecodeTransitions(1, j, tmpcount, &SynStateInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum], &SynEventInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum], tex1Dfetch(TRANSEBYTES,belonglts), tex1Dfetch(LTSSTATEBITS, belonglts));
+							CudaDecodeTransitions(1, j, tmpj, &SynStateInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum], &SynEventInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum], tex1Dfetch(TRANSEBYTES,belonglts), tex1Dfetch(LTSSTATEBITS, belonglts));
 							
 							if(SynEventInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum] == 0)
 							{
@@ -666,7 +693,7 @@ __global__ void CUDADeadlockBFSVerifyChild(unsigned int ParentID, unsigned int P
 								x = j;	
 							}			
 							CudaNewStateV(&localstateV, InvthreadgroupID, &j, &tmpj, tmpT, tex1Dfetch(TRANSEBYTES,InvthreadgroupID), CEventEncodeBits);
-							tmpcount++;
+							
 							syncduplicate[InvthreadgroupID + vthreadgroupID * PLTSNum] = false;
 						}
 						nosync = 0;
@@ -697,7 +724,7 @@ __global__ void CUDADeadlockBFSVerifyChild(unsigned int ParentID, unsigned int P
 							}
 						}
 						if(nosync == PLTSNum - 1){
-							continue;
+							break;
 						}
 
 						if(lessthanall == PLTSNum -1){
@@ -778,7 +805,6 @@ __global__ void CUDADeadlockBFSVerifyChild(unsigned int ParentID, unsigned int P
 				if(i == PLTSNum){
 					printf("vtg%d detect deadlock\n", vthreadgroupID);
 					IFDeadlockDetected = true;
-					break;
 				}
 			}
 		}
@@ -944,6 +970,8 @@ __global__ void CUDADeadlockBFSVerify(unsigned int * PG_AllLTS, unsigned int * P
 	unsigned int transevent;
 	unsigned int maxtransevent;
 
+	int nosync,lessthanall;
+
 	unsigned int globalbuckethash;
 	unsigned int visitedstore;
 
@@ -1019,6 +1047,7 @@ __global__ void CUDADeadlockBFSVerify(unsigned int * PG_AllLTS, unsigned int * P
 			WarpCBindex[i].beginindex = 0;
 			WarpCBindex[i].endindex = 0;
 		}
+		Ifcollisionhappens = false;
 	}
 
 	__syncthreads();
@@ -1117,7 +1146,7 @@ __global__ void CUDADeadlockBFSVerify(unsigned int * PG_AllLTS, unsigned int * P
 			
 				if(!Ifcollisionhappens && SuccessorMark.synbeginInt != SuccessorMark.synendInt && !ifglobaldup){
 					bool  ifmatch;
-					int tmpcount=0;
+					//int tmpcount=0;
 					int tmpj = 0;
 					m = 0;
 					x = -1;
@@ -1127,7 +1156,7 @@ __global__ void CUDADeadlockBFSVerify(unsigned int * PG_AllLTS, unsigned int * P
 						if(m == 0 && syncduplicate[InvthreadgroupID + vthreadgroupID * PLTSNum]){
 							if(j == SuccessorMark.synendInt)
 								break;
-							CudaDecodeTransitions(1, j, tmpcount, &SynStateInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum], &SynEventInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum], tex1Dfetch(TRANSEBYTES,belonglts), tex1Dfetch(LTSSTATEBITS, belonglts));
+							CudaDecodeTransitions(1, j, tmpj, &SynStateInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum], &SynEventInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum], tex1Dfetch(TRANSEBYTES,belonglts), tex1Dfetch(LTSSTATEBITS, belonglts));
 							if(SynEventInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum] == 0)
 							{
 								SynEventInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum] = EMPTYVECT32;
@@ -1143,14 +1172,22 @@ __global__ void CUDADeadlockBFSVerify(unsigned int * PG_AllLTS, unsigned int * P
 								x = j;	
 							}			
 							CudaNewStateV(&localstateV, InvthreadgroupID, &j, &tmpj, tmpT, tex1Dfetch(TRANSEBYTES, InvthreadgroupID), PEventEncodeBits);
-							tmpcount++;
+							//tmpcount++;
 							syncduplicate[InvthreadgroupID + vthreadgroupID * PLTSNum] = false;
 
 						}
+						nosync = 0;
+						lessthanall = 0;
+						m=0;
 
 						for(i=0; i<PLTSNum; i++){
 							if(i == InvthreadgroupID)
 								continue;
+							if(SynEventInteractive[i + vthreadgroupID * PLTSNum] == EMPTYVECT32)
+							{
+								nosync++;
+								continue;
+							}	
 
 							if(SynEventInteractive[i + vthreadgroupID * PLTSNum] <= maxtransevent){  //if bigger than the maxtransevent of local, no need to compare as it's impossible to sync
 								if(SynEventInteractive[InvthreadgroupID + vthreadgroupID * PLTSNum] > SynEventInteractive[i + vthreadgroupID * PLTSNum]){
@@ -1163,9 +1200,21 @@ __global__ void CUDADeadlockBFSVerify(unsigned int * PG_AllLTS, unsigned int * P
 									SynTwoStates(&localstateV, SynStateInteractive[i + vthreadgroupID * PLTSNum], i);
 									syncduplicate[InvthreadgroupID + vthreadgroupID * PLTSNum] = true;
 									ifmatch = true;
-								}
+								}else
+									lessthanall++;
 							}
 						}
+					
+						if(nosync == PLTSNum - 1){
+							break;
+						}
+
+						if(lessthanall == PLTSNum -1){
+							m = 0;
+							syncduplicate[InvthreadgroupID + vthreadgroupID*PLTSNum] = true;
+							continue;
+						}
+	
 
 						if(syncduplicate[InvthreadgroupID + vthreadgroupID * PLTSNum])
 							m = 0;
@@ -1198,7 +1247,7 @@ __global__ void CUDADeadlockBFSVerify(unsigned int * PG_AllLTS, unsigned int * P
 							}
 							syncduplicate[InvthreadgroupID + vthreadgroupID * PLTSNum] = true;
 							if(Ifcollisionhappens){
-								for(k = 511; k > 0; k--){
+								for(k = 511; k >= 0; k--){
 									if(kickoutRecord != EMPTYVECT32){
 										if(atomicCAS(&(RecordTable[(HashNum-1)*blockDim.x + k]), EMPTYVECT32, kickoutRecord)==EMPTYVECT32){
 											kickoutRecord = EMPTYVECT32;
@@ -1227,9 +1276,9 @@ __global__ void CUDADeadlockBFSVerify(unsigned int * PG_AllLTS, unsigned int * P
 				ifnooutgoing[vthreadgroupID*PLTSNum + InvthreadgroupID] = true;
 			}
 
-			if(InvthreadgroupID == 0&&!ifglobaldup){
+			if(InvthreadgroupID == 0&&!ifglobaldup &&!Ifcollisionhappens){
 				for(i = 0; i < PLTSNum; i++){
-					if(!ifnooutgoing[i + vthreadgroupID * PLTSNum] && !Ifcollisionhappens)
+					if(!ifnooutgoing[i + vthreadgroupID * PLTSNum])
 						break;
 				}
 
@@ -1725,13 +1774,13 @@ void CallCudaBFS(unsigned int * AllLTS, unsigned int * AllStates, unsigned int *
 	unsigned int H_GlobalbucketNum;
 
 	int * parameters = new int[2];
-	parameters[0]=3;
+	parameters[0]=4;
 	parameters[1]=12;
 	//unsigned int * G_GlobalbucketNum;
 
-	int rv[8];
+	int rv[10];
 	srand(time(NULL));
-	for(i = 0; i < 8; i++){
+	for(i = 0; i < 10; i++){
 		rv[i] = rand();
 	}
 
@@ -1781,24 +1830,29 @@ void CallCudaBFS(unsigned int * AllLTS, unsigned int * AllStates, unsigned int *
 	cudaMemcpy(G_OutgoingTEbytes, OutgoingTEbytes, sizeof(unsigned int)*LTSNum, cudaMemcpyHostToDevice);
 
 	cudaMemcpyToSymbol(LA1, &rv[0], sizeof(int));
-	cudaMemcpyToSymbol(LA2, &rv[1], sizeof(int));
-	cudaMemcpyToSymbol(LA3, &rv[2], sizeof(int));
-	cudaMemcpyToSymbol(LB1, &rv[3], sizeof(int));
-	cudaMemcpyToSymbol(LB2, &rv[4], sizeof(int));
+	cudaMemcpyToSymbol(LB1, &rv[1], sizeof(int));
+	cudaMemcpyToSymbol(LA2, &rv[2], sizeof(int));
+	cudaMemcpyToSymbol(LB2, &rv[3], sizeof(int));
+	cudaMemcpyToSymbol(LA3, &rv[4], sizeof(int));
 	cudaMemcpyToSymbol(LB3, &rv[5], sizeof(int));
-	cudaMemcpyToSymbol(BUCA, &rv[6], sizeof(int));
-	cudaMemcpyToSymbol(BUCB, &rv[7], sizeof(int));
+	cudaMemcpyToSymbol(LA4, &rv[6], sizeof(int));
+	cudaMemcpyToSymbol(LB4, &rv[7], sizeof(int));
+	cudaMemcpyToSymbol(BUCA, &rv[8], sizeof(int));
+	cudaMemcpyToSymbol(BUCB, &rv[9], sizeof(int));
 
-	for(i = 0; i < 6; i++){
+	for(i = 0; i < 8; i++){
 		rv[i] = rand();
 	}
 	i = 512;
 	cudaMemcpyToSymbol(GA1, &rv[0], sizeof(int));
-	cudaMemcpyToSymbol(GA2, &rv[1], sizeof(int));
-	cudaMemcpyToSymbol(GA3, &rv[2], sizeof(int));
-	cudaMemcpyToSymbol(GB1, &rv[3], sizeof(int));
-	cudaMemcpyToSymbol(GB2, &rv[4], sizeof(int));
+	cudaMemcpyToSymbol(GB2, &rv[1], sizeof(int));
+	cudaMemcpyToSymbol(GA2, &rv[2], sizeof(int));
+	cudaMemcpyToSymbol(GB2, &rv[3], sizeof(int));
+	cudaMemcpyToSymbol(GA3, &rv[4], sizeof(int));
 	cudaMemcpyToSymbol(GB3, &rv[5], sizeof(int));
+	cudaMemcpyToSymbol(GA4, &rv[6], sizeof(int));
+	cudaMemcpyToSymbol(GB4, &rv[7], sizeof(int));
+
 	cudaMemcpyToSymbol(TableSize, &i, sizeof(int));
 
 	cudaMemcpyToSymbol(HashNum, &parameters[0],sizeof(int));
